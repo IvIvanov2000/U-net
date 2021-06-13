@@ -1,0 +1,118 @@
+# Импорт модулей
+import tensorflow as tf
+from tensorflow import keras
+from keras.models import Sequential
+from keras import Model
+from keras.layers import Conv2D, MaxPooling2D, Concatenate, Conv2DTranspose, Input, Lambda, Dropout
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import cv2
+import sys
+import random
+from tqdm import tqdm
+from skimage.io import imread, imshow
+from skimage.transform import resize
+
+# Указание пути к датасету
+TRAIN_PATH = 'PATH'
+TEST_PATH = 'PATH'
+
+# Возврат всех каталогов из пути
+train_ids = next(os.walk(TRAIN_PATH))[1]
+test_ids = next(os.walk(TEST_PATH))[1]
+
+# Создание списков в которые записывается датасет
+X_train = np.zeros((len(train_ids), 512,512,3), dtype=np.uint8)
+Y_train = np.zeros((len(train_ids), 512,512,1), dtype=np.bool)
+
+# Изменение размера объектов датасета с их загрузкой в списки
+for n, id_ in tqdm(enumerate(train_ids), total=len(train_ids)):
+    path = TRAIN_PATH + id_
+    img = imread(path + '/images/' + id_ + '.JPG')[:,:,:3]
+    img = resize(img, (512,512), mode = 'constant', preserve_range = True)
+    X_train[n] = img
+    mask = np.zeros((512,512,1), dtype=np.bool)
+    for mask_file in next(os.walk(path + '/masks/'))[2]:
+        mask_ = imread(path + '/masks/' + mask_file, cv2.IMREAD_GRAYSCALE)
+        mask_ = np.expand_dims(resize(mask_, (512,512), mode='constant',
+                                     preserve_range=True), axis=2)
+        mask = np.maximum(mask, mask_[:,:,:,0])
+    Y_train[n] = mask
+
+# Делаю ресайз и запись в список для тестирования
+X_test = np.zeros((len(test_ids), 512,512,3), dtype=np.uint8)
+sizes_test = []
+for n, id_ in tqdm(enumerate(test_ids), total = len(test_ids)):
+    path = TEST_PATH + id_
+    img = imread(path + '/images/' + id_ + '.JPG')[:,:,:3]
+    sizes_test.append([img.shape[0], img.shape[1]])
+    img = resize(img, (512,512), mode = 'constant', preserve_range=True)
+    X_test[n] = img
+
+# Нормализация пикселов
+inputs = Input((512,512,3))
+s = Lambda(lambda x: x/255)(inputs)
+
+# Модель нейросети
+Convolution1 = Conv2D(16, (3,3), activation='relu', padding = 'same')(s)
+Convolution1 = Dropout(0.1)(Convolution1)
+Convolution1 = Conv2D(16,(3,3), activation='relu',padding='same')(Convolution1)
+MaxPooling1 = MaxPooling2D((2,2))(Convolution1)
+
+Convolution2 = Conv2D(32, (3,3), activation='relu', padding = 'same')(MaxPooling1)
+Convolution2 = Dropout(0.1)(Convolution2)
+Convolution2 = Conv2D(32,(3,3), activation='relu',padding='same')(Convolution2)
+MaxPooling2 = MaxPooling2D((2,2))(Convolution2)
+
+Convolution3 = Conv2D(64, (3,3), activation='relu', padding = 'same')(MaxPooling2)
+Convolution3 = Dropout(0.2)(Convolution3)
+Convolution3 = Conv2D(64,(3,3), activation='relu',padding='same')(Convolution3)
+MaxPooling3 = MaxPooling2D((2,2))(Convolution3)
+
+Convolution4 = Conv2D(128, (3,3), activation='relu', padding = 'same')(MaxPooling3)
+Convolution4 = Dropout(0.2)(Convolution4)
+Convolution4 = Conv2D(128,(3,3), activation='relu',padding='same')(Convolution4)
+MaxPooling4 = MaxPooling2D((2,2))(Convolution4)
+
+Convolution5 = Conv2D(256, (3,3), activation='relu', padding = 'same')(MaxPooling4)
+Convolution5 = Dropout(0.3)(Convolution5)
+Convolution5 = Conv2D(256,(3,3), activation='relu',padding='same')(Convolution5)
+
+TransposeConvolution6 = Conv2DTranspose(128, (2,2), strides=(2,2), padding='same')(Convolution5)
+TransposeConvolution6 = Concatenate(axis=3)([TransposeConvolution6,Convolution4])
+Convolution6 = Conv2D(128,(3,3), strides=1, activation='relu',padding='same')(TransposeConvolution6)
+Convolution6 = Dropout(0.2)(Convolution6)
+Convolution6 = Conv2D(128,(3,3), strides=1, activation='relu',padding='same')(Convolution6)
+
+TransposeConvolution7 = Conv2DTranspose(64, (2,2), strides=(2,2), padding='same')(Convolution6)
+TransposeConvolution7 = Concatenate(axis=3)([TransposeConvolution7,Convolution3])
+Convolution7 = Conv2D(64,(3,3), strides=1, activation='relu',padding='same')(TransposeConvolution7)
+Convolution7 = Dropout(0.2)(Convolution7)
+Convolution7 = Conv2D(64,(3,3), strides=1, activation='relu',padding='same')(Convolution7)
+
+TransposeConvolution8 = Conv2DTranspose(32, (2,2), strides=(2,2), padding='same')(Convolution7)
+TransposeConvolution8 = Concatenate(axis=3)([TransposeConvolution8,Convolution2])
+Convolution8 = Conv2D(32,(3,3), strides=1, activation='relu',padding='same')(TransposeConvolution8)
+Convolution8 = Dropout(0.1)(Convolution8)
+Convolution8 = Conv2D(32,(3,3), strides=1, activation='relu',padding='same')(Convolution8)
+
+TransposeConvolution9 = Conv2DTranspose(16, (2,2), strides=(2,2), padding='same')(Convolution8)
+TransposeConvolution9 = Concatenate(axis=3)([TransposeConvolution9,Convolution1])
+Convolution9 = Conv2D(16,(3,3), strides=1, activation='relu',padding='same')(TransposeConvolution9)
+Convolution9 = Dropout(0.1)(Convolution9)
+Convolution9 = Conv2D(16,(3,3), strides=1, activation='relu',padding='same')(Convolution9)
+
+outputs = Conv2D(1,(1,1), activation='sigmoid')(Convolution9)
+
+# Сцепка модели
+model = Model(inputs=[inputs], outputs=[outputs])
+
+# Настройка параметров обучения модели
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Тренировка модели
+results = model.fit(X_train, Y_train, epochs = 500, batch_size = 5, validation_split = 0.1)
+
+# Сохранение обученной модели
+model.save('PATH')
